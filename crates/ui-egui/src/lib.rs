@@ -38,6 +38,7 @@ pub mod channel_view;
 pub mod channels_panel;
 pub mod chrome_ui;
 pub mod cjk_fonts;
+pub mod clip_line_ui;
 pub mod color_picker_ui;
 pub mod color_range_ui;
 pub mod comps_ui;
@@ -855,11 +856,14 @@ impl PhotocraftApp {
         let (bytes, warnings) = export(&st.doc, &path, settings)?;
         let write = self.services.write.as_mut().ok_or("no writer configured")?;
         write(&path, &bytes)?;
-        if let Some(st) = self.session.active_mut() {
+        // A flat file that lost something (layers flattened…) is a copy, as in Photoshop: the
+        // document keeps its own path and unsaved state, so its layers are never closed away.
+        let copy = !warnings.is_empty() && !photocraft_engine::file_cmds::saves_in_place(&path);
+        if !copy && let Some(st) = self.session.active_mut() {
             st.path = Some(path.clone());
             st.saved_revision = st.revision;
         }
-        self.ui.status = format!("Saved {path}");
+        self.ui.status = if copy { format!("Saved a copy as {path}") } else { format!("Saved {path}") };
         // "Save Document" script events and File › Generate › Image Assets.
         if let Some(i) = self.session.active_index()
             && let Some(r) = photocraft_engine::automate_cmds::document_saved(&mut self.session, i)
@@ -867,7 +871,8 @@ impl PhotocraftApp {
             self.ui.status = format!("Saved {path}; {} image assets in {}", r["files"].as_array().map_or(0, Vec::len), r["dir"].as_str().unwrap_or(""));
         }
         self.ui.status_error = false;
-        notices::io_warnings(self, &format!("Saved {}", file_open::display_name(&path)), &warnings);
+        let title = if copy { "Saved a copy as" } else { "Saved" };
+        notices::io_warnings(self, &format!("{title} {}", file_open::display_name(&path)), &warnings);
         self.sync_views();
         Ok((path, warnings))
     }

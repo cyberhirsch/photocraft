@@ -176,8 +176,10 @@ fn export_warnings_reach_status_notice_and_control_response() {
     let r = menus::invoke(&mut app, &ctx, "file.saveAs", json!({ "path": "/pics/cat.png" })).unwrap();
     assert_eq!(r["path"], "/pics/cat.png");
     assert_eq!(r["warnings"][0], "Layers were flattened");
-    assert!(app.ui.status.contains("Saved cat.png"), "{}", app.ui.status);
+    assert!(app.ui.status.contains("Saved a copy as cat.png"), "{}", app.ui.status);
     assert_eq!(app.ui.notices.len(), 1);
+    // Flattened into a PNG, it was a copy: the document is still the PSD, with its changes unsaved.
+    assert_eq!(app.session.active().and_then(|s| s.path.clone()).as_deref(), Some("/pics/cat.psd"));
     // No warnings: no notice, and the response says so.
     let r = menus::invoke(&mut app, &ctx, "file.saveAs", json!({ "path": "/pics/cat.psd" })).unwrap();
     assert_eq!(r["warnings"], json!([]));

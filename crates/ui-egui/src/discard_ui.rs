@@ -117,12 +117,14 @@ fn advance(app: &mut PhotocraftApp, ctx: &egui::Context) {
     }
 }
 
-/// Saves `doc` in place; false when it is gone, the save failed or its file dialog was cancelled.
+/// Saves `doc` in place; false when it is gone, the save failed or its file dialog was cancelled,
+/// or it still has unsaved changes: a flat file picked in the dialog (PNG, JPEG…) is only a copy
+/// that loses the layers, so the document must not close on it.
 fn save(app: &mut PhotocraftApp, ctx: &egui::Context, doc: DocId) -> bool {
     let Some(i) = index_of(app, doc) else { return false };
     app.session.set_active(i);
     match crate::menus::invoke_unguarded(app, ctx, "file.save", json!({})) {
-        Ok(_) => true,
+        Ok(_) => index_of(app, doc).and_then(|i| app.session.documents().get(i)).is_some_and(|d| !d.is_dirty()),
         // Backing out of the file dialog is the user's choice, not an error.
         Err(e) if e == "cancelled" => false,
         Err(e) => {
@@ -437,6 +439,27 @@ mod tests {
         h.run_steps(2);
         assert!(!asked.get());
         assert_eq!(docs_left(&h), Some(1), "Enter pressed the focused No");
+    }
+
+    #[test]
+    fn saving_a_flat_copy_does_not_close_the_document() {
+        let mut app = app_with_docs(1);
+        let ctx = egui::Context::default();
+        make_dirty(&mut app, 0);
+        // The save dialog picks a PNG: two layers flatten into it, so it is only a copy.
+        app.services.pick_save = Some(Box::new(|_| Some("/pics/harbour.png".to_string())));
+        app.services.export = Some(Box::new(|_, _, _| Ok((Vec::new(), vec!["2 layer(s) flattened".to_string()]))));
+        app.services.write = Some(Box::new(|_, _| Ok(())));
+        crate::menus::invoke(&mut app, &ctx, "file.close", json!({})).unwrap();
+        let doc = doc_id(&app, 0);
+        assert!(!save(&mut app, &ctx, doc), "a flattened copy is not a save");
+        assert_eq!(app.session.documents().len(), 1, "the layered document stays open");
+        assert!(app.session.documents()[0].is_dirty());
+        assert!(app.discard.is_some(), "the prompt is still up");
+        // Saved as a PSD it closes.
+        app.services.pick_save = Some(Box::new(|_| Some("/pics/harbour.psd".to_string())));
+        app.services.export = Some(Box::new(|_, _, _| Ok((Vec::new(), Vec::new()))));
+        assert!(save(&mut app, &ctx, doc));
     }
 
     /// One frame with the window's close button pressed; whether the guard cancelled the close.
